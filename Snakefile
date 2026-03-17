@@ -1,0 +1,163 @@
+rule all: 
+    input:
+        "results/{sample}_counts_report.txt"
+
+rule cut_grna_bind:
+#need grnabindingseqs.fasta, which is a fasta of all possible grna binding sequences (before the barcode)
+#sample input: a single fastq
+#sample output: one fastq with sequences that had grnabindingseqs cut from them
+    input:
+        fastq1="data/{sample}_merged.fastq.gz"
+    output:
+        cut="cut/{sample}_cut.fastq.gz",
+    threads: 
+        workflow.cores * 0.5
+    shell:
+        "cutadapt -g TTGTGGAAAGGACGAAACACCG -o {output.cut} -j {threads} {input.fastq1}"
+
+
+rule extract_barcodes:
+#need extract_grnas.py, grnas.txt (grna whitelist)
+#sample input: a cut fastq
+#sample output: barcoded fastq
+# and a log file
+    input:
+        whitelist="misc/grnas.txt",
+        fastq2="cut/{sample}_cut.fastq.gz"
+    output:
+        barcoded="bc/{sample}_barcoded.fastq.gz",
+        log="logs/{sample}_cutbc_log.txt"
+    threads:
+        workflow.cores * 0.5
+    shell:
+        "pigz -dc {input.fastq2} | python /home/unix/fkeer/scripts/extract_grnas.py --input_stdin --output_stdout --log={output.log} --grna_whitelist={input.whitelist} --threads {threads} 2> {output.log} | pigz -c -p {threads} > {output.barcoded}"
+
+
+rule cut_oe_protein:
+#hardcoded OE sequence TATTCCCATGGCGCGCC-TTGCTAGGACCGGCCTTAAAGC (for protein stitch seq)
+#sample input: several fastqs
+#sample output: several fastqs, with the OE-protein sequence cut out
+    input:
+        fastq3="bc/{sample}_barcoded.fastq.gz"
+    output:
+        oe_trim="oe/{sample}_oetrim-protein.fastq.gz",
+        untrimmed="un/{sample}_notprotein.fastq.gz"
+    threads: 
+        workflow.cores * 0.5
+    shell:
+        "cutadapt -g TATTCCCATGGCGCGCCTTGCTAGGACCGGCCTTAAAGC -o {output.oe_trim} -j {threads} {input.fastq3} --untrimmed-output {output.untrimmed}"
+
+
+rule cut_oe_mrna:
+#hardcoded OE sequence TATTCCCATGGCGCGCC (for mRNA stitch seq)
+#sample input: several fastqs
+#sample output: several fastqs, with the OE sequence cut out
+    input:
+        fastq3="bc/{sample}_barcoded.fastq.gz"
+    output:
+        oe_trim="oe/{sample}_oetrim-mrna.fastq.gz"
+    threads: 
+        workflow.cores * 0.5
+    shell:
+        "cutadapt -g TATTCCCATGGCGCGCC -o {output.oe_trim} -j {threads} {input.fastq3}"
+
+rule cut_25bp:
+#cut first 25 bases (primer)
+#sample input: several fastqs
+#sample output: several fastqs, with the primer cut off the left side
+    input:
+        fastq3b="oe/{sample}_oetrim-mrna.fastq.gz"
+    output:
+        trim35="oe/{sample}_trim-mrna.fastq.gz"
+    threads: 
+        workflow.cores * 0.5
+    shell:
+        "cutadapt -u 25 -o {output.trim35} -j {threads} {input.fastq3b}"
+
+
+rule cut_umi1:
+#cut 9bp umi (for protein stitch seq)
+#sample input: several fastqs
+#sample output: several fastqs, with the first 9bp cut out
+    input:
+        fastq3a="oe/{sample}_oetrim-protein.fastq.gz"
+    output:
+        umi_trim="oe/{sample}_umitrim-protein.fastq.gz"
+    threads: 
+        workflow.cores * 0.5
+    shell:
+        "cutadapt -u 9 -o {output.umi_trim} -j {threads} {input.fastq3a}"
+
+
+rule make_15bp:
+#make all reads 15bp, cuts extra bases off the 3' side
+#sample input: several fastqs
+#sample output: several fastqs, with the right side cut off to make it 15bp max
+    input:
+        fastq3b="oe/{sample}_umitrim-protein.fastq.gz"
+    output:
+        trim15="oe/{sample}_proteinbc.fastq.gz"
+    threads: 
+        workflow.cores * 0.5
+    shell:
+        "cutadapt -l 15 -o {output.trim15} -j {threads} {input.fastq3b}"
+
+
+rule align_mrna:
+#need a bowtie2 custom reference genome called "goi-mrna"
+#make that using bowtie2-build genes.fasta goi
+#using downloaded mRNA fasta from geneious (can have many gRNAs in one fasta)
+#sample input: completely trimmed fastqs
+#sample output: sam files (one aligned, one unaligned), aligned against the custom reference
+    input:
+        fastq4="oe/{sample}_oetrim-mrna.fastq.gz"
+    output:
+        bam="bam/{sample}_aligned-mrna.bam"
+    threads: 
+        workflow.cores * 0.5
+    shell:
+        "bowtie2 -p {threads} --no-unal -x misc/goi-mrna -U {input.fastq4} -S - | samtools view -@ {threads} -bS - > {output.bam}"
+
+
+rule align_protein:
+#need a bowtie2 custom reference genome called "goi-protein"
+#make that using bowtie2-build genes.fasta goi
+#using downloaded mRNA fasta from geneious (can have many gRNAs in one fasta)
+#sample input: completely trimmed fastqs
+#sample output: sam files (one aligned, one unaligned), aligned against the custom reference
+    input:
+        fastq4="oe/{sample}_proteinbc.fastq.gz"
+    output:
+        bam="bam/{sample}_aligned-protein.bam"
+    threads: 
+        workflow.cores * 0.5
+    shell:
+        "bowtie2 -p {threads} --no-unal -x misc/goi-protein -U {input.fastq4} -S - | samtools view -@ {threads} -bS - > {output.bam}"
+
+
+rule postprocess_protein:
+#call postprocess_grna_bam.py to do the counts for each gene
+#sample input: bam file, whitelist
+#sample output: counts report txt file, bt tagged bam
+    input:
+        bam="bam/{sample}_aligned-protein.bam",
+        whitelist="misc/grnas.txt"
+    output:
+        #btbam="results/{sample}_bttagged-protein.bam",
+        counts="results/{sample}_counts_report-protein.txt"
+    shell:
+        "python /home/unix/fkeer/scripts/postprocess_grna_bam.py --input_bam={input.bam} --counts_report={output.counts} --grna_whitelist={input.whitelist}"
+
+rule postprocess_mrna:
+#call postprocess_grna_bam.py to do the counts for each gene
+#sample input: bam file, whitelist
+#sample output: counts report txt file, bt tagged bam
+    input:
+        bam="bam/{sample}_aligned-mrna.bam",
+        whitelist="misc/grnas.txt"
+    output:
+        #btbam="results/{sample}_bttagged-mrna.bam",
+        counts="results/{sample}_counts_report-mrna.txt"
+    shell:
+        "python /home/unix/fkeer/scripts/postprocess_grna_bam.py --input_bam={input.bam} --counts_report={output.counts} --grna_whitelist={input.whitelist}"
+
