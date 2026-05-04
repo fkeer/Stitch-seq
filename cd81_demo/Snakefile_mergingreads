@@ -1,0 +1,17 @@
+#put this in fastq folder, will output a merged fastq into the data folder
+#which will be ready for the second snakefile to actually analyze it 
+
+rule all: 
+    input:
+        "../data/{sample}_merged.fastq.gz"
+
+rule merge_paired_ends:
+#to produce stitched reads from paired ends 
+    input:
+        r1="{sample}_R1.fastq.gz",
+        r2="{sample}_R2.fastq.gz"
+    output:
+        merged="../data/{sample}_merged.fastq.gz",
+        log="../logs/{sample}_log.txt"
+    shell:
+        "~/NGmerge/NGmerge -z -g -u 50 -l {output.log} -1 {input.r1} -2 {input.r2} -o {output.merged}"
