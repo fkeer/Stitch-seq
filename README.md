@@ -42,4 +42,4 @@ statsmodels v0.14.5
 
 
 Demo:
-Follow installation instructions. Copy CD81.fastq, grnas.txt, and cd81-mrna.fasta to misc folder. Use bowtie2 to make custom reference (bowtie2-build cd81.fasta goi). Run Snakefile on CD81.fastq (snakemake -p --cores all results/cd81_counts_report-mrna.txt).  
+Follow installation instructions. Copy CD81.fastq, grnas.txt, and cd81-mrna.fasta to misc folder. Use bowtie2 to make custom reference (bowtie2-build cd81.fasta goi). Run Snakefile on CD81.fastq (snakemake -p --cores all results/cd81_counts_report-mrna.txt). Expected output is included in demo folder. Expected run time is ~20min. 
